@@ -1,190 +1,141 @@
-import { useState } from "react";
-import { Search, GitCommit, AlertTriangle, ArrowRight, User } from "lucide-react";
-import "./App.css";
+import { useState, useCallback } from 'react';
+import {
+  LayoutDashboard, Settings, Globe, GitBranch, RotateCcw, ScrollText, GitCommit,
+} from 'lucide-react';
+import { apiPost } from './api';
+import type { DashboardData, Page } from './types';
 
-interface Author {
-  name: string;
-  email: string;
-}
+import DashboardView from './views/DashboardView';
+import ConfigView from './views/ConfigView';
+import RemotesView from './views/RemotesView';
+import BranchesView from './views/BranchesView';
+import ReinitView from './views/ReinitView';
+import AuditView from './views/AuditView';
+
+import './App.css';
+
+const NAV_ITEMS: { key: Page; label: string; icon: React.ReactNode; section?: string }[] = [
+  { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} />, section: 'Overview' },
+  { key: 'config', label: 'Config Wizard', icon: <Settings size={18} />, section: 'Tools' },
+  { key: 'remotes', label: 'Remotes', icon: <Globe size={18} /> },
+  { key: 'branches', label: 'Branch Cleanup', icon: <GitBranch size={18} /> },
+  { key: 'reinit', label: 'Reinitializer', icon: <RotateCcw size={18} /> },
+  { key: 'audit', label: 'Audit Log', icon: <ScrollText size={18} />, section: 'History' },
+];
 
 function App() {
-  const [repoPath, setRepoPath] = useState<string>("");
-  const [authors, setAuthors] = useState<Author[]>([]);
-  const [mappings, setMappings] = useState<Record<string, Author>>({});
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanComplete, setScanComplete] = useState(false);
+  const [repoPath, setRepoPath] = useState('');
+  const [page, setPage] = useState<Page>('dashboard');
+  const [dashData, setDashData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleScanRepo = async () => {
-    if (!repoPath.trim()) {
-      setError("Please enter a valid directory path.");
-      return;
-    }
-
-    setIsScanning(true);
+  const loadRepo = useCallback(async (path?: string) => {
+    const target = path ?? repoPath;
+    if (!target.trim()) return;
+    setLoading(true);
     setError(null);
-    setScanComplete(false);
-
     try {
-      const response = await fetch("http://localhost:3001/api/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: repoPath })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to scan repository");
-      }
-      
-      const discoveredAuthors = await response.json();
-      setAuthors(discoveredAuthors);
-      setScanComplete(true);
-      
-      // Initialize mappings
-      const initialMappings: Record<string, Author> = {};
-      discoveredAuthors.forEach((a: Author) => {
-        initialMappings[a.email] = { name: "", email: "" };
-      });
-      setMappings(initialMappings);
-      
+      const data = await apiPost('/api/dashboard', { path: target });
+      setDashData(data);
     } catch (err: any) {
       setError(err.message);
-    } finally {
-      setIsScanning(false);
+      setDashData(null);
     }
-  };
+    setLoading(false);
+  }, [repoPath]);
 
-  const handleUpdateMapping = (oldEmail: string, field: 'name' | 'email', value: string) => {
-    setMappings(prev => ({
-      ...prev,
-      [oldEmail]: {
-        ...prev[oldEmail],
-        [field]: value
-      }
-    }));
-  };
+  const handleLoad = () => loadRepo();
+  const handleRefresh = () => loadRepo();
 
-  const handleRewrite = async () => {
-    // In future: send mappings to backend to perform git filter-repo
-    alert("This feature is under construction! This will rewrite the history with your new mappings.");
-  };
+  let currentSection = '';
 
   return (
-    <div className="container">
-      <div className="header-container">
-        <h1 className="title">
-          <GitCommit color="var(--accent-color)" size={36} />
-          Git History Rewriter
-        </h1>
-        <p className="subtitle">Safely change past commit authors before pushing to a new account.</p>
-      </div>
-
-      {error && (
-        <div className="alert-warning">
-          <AlertTriangle size={20} />
-          <span>{error}</span>
+    <>
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <h1><GitCommit size={22} color="var(--accent-blue)" /> Git Commander</h1>
+          <p>Repository Configuration Tool</p>
         </div>
-      )}
 
-      {/* STEP 1 */}
-      <div className="card">
-        <h2 className="step-title"><span className="step-number">1</span> Select Local Repository</h2>
-        <div className="form-group">
-          <label>Absolute path to your project folder</label>
-          <div className="path-input-wrapper">
-            <input 
-              type="text" 
-              placeholder="e.g. C:\Projects\my-awesome-repo"
+        {/* Repo Path Input */}
+        <div className="repo-selector">
+          <label>Repository Path</label>
+          <div className="repo-selector-input-row">
+            <input
+              type="text"
+              placeholder="C:\Projects\my-app"
               value={repoPath}
-              onChange={(e) => setRepoPath(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleScanRepo()}
+              onChange={e => setRepoPath(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLoad()}
             />
-            <button 
-              className="btn btn-secondary" 
-              onClick={handleScanRepo}
-              disabled={isScanning}
-            >
-              {isScanning ? "Scanning..." : <><Search size={18} /> Scan</>}
+            <button onClick={handleLoad} disabled={loading}>
+              {loading ? '...' : 'Load'}
             </button>
           </div>
-          <p className="helper-text">We will look for a .git folder inside this directory.</p>
+          {error && <div className="repo-status error">{error}</div>}
+          {dashData && <div className="repo-status success">✓ {dashData.repoName} loaded</div>}
         </div>
-      </div>
 
-      {/* STEP 2 */}
-      {scanComplete && authors.length === 0 && (
-        <div className="card">
-          <p style={{ margin: 0, textAlign: 'center', color: 'var(--text-secondary)' }}>
-            No commits found in this repository.
-          </p>
-        </div>
-      )}
-
-      {scanComplete && authors.length > 0 && (
-        <div className="card animate-fade-in">
-          <h2 className="step-title"><span className="step-number">2</span> Update Identities</h2>
-          <p className="helper-text" style={{ marginBottom: '1.5rem' }}>
-            We found {authors.length} unique author(s) in the commit history. 
-            Enter a new name and email for the ones you want to overwrite. 
-            <strong> If left blank, the original author will remain unchanged.</strong>
-          </p>
-
-          <div className="author-list">
-            {authors.map((author) => (
-              <div className="author-item" key={author.email}>
-                <div className="author-header">
-                  <div className="author-old-info">
-                    <User size={20} color="var(--text-secondary)" />
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{author.name}</div>
-                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{author.email}</div>
-                    </div>
-                  </div>
-                  <span className="badge">Original Author</span>
-                </div>
-
-                <div className="new-inputs-grid">
-                  <div className="form-group">
-                    <label>Change Name To (Optional)</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Satoshi Nakamoto"
-                      value={mappings[author.email]?.name || ""}
-                      onChange={(e) => handleUpdateMapping(author.email, 'name', e.target.value)}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Change Email To (Optional)</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. satoshi@bitcoin.org"
-                      value={mappings[author.email]?.email || ""}
-                      onChange={(e) => handleUpdateMapping(author.email, 'email', e.target.value)}
-                    />
-                  </div>
-                </div>
+        {/* Navigation */}
+        <nav className="sidebar-nav">
+          {NAV_ITEMS.map(item => {
+            const showSection = item.section && item.section !== currentSection;
+            if (item.section) currentSection = item.section;
+            return (
+              <div key={item.key}>
+                {showSection && <div className="nav-section-title">{item.section}</div>}
+                <button
+                  className={`nav-item ${page === item.key ? 'active' : ''}`}
+                  onClick={() => setPage(item.key)}
+                >
+                  {item.icon} {item.label}
+                </button>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            );
+          })}
+        </nav>
 
-      {/* STEP 3 */}
-      {scanComplete && authors.length > 0 && (
-        <div className="card animate-fade-in" style={{ borderColor: 'rgba(248, 81, 73, 0.4)' }}>
-          <h2 className="step-title" style={{ color: '#ff7b72' }}>
-            <span className="step-number" style={{ background: '#ff7b72', color: 'white' }}>3</span> 
-            Execute Rewrite
-          </h2>
-          <p className="helper-text" style={{ marginBottom: '1.5rem' }}>
-            This process will modify your local Git history. A backup of your .git folder will be created automatically before any changes are made.
-          </p>
-          <button className="btn btn-primary" onClick={handleRewrite} style={{ width: '100%', padding: '0.75rem', fontSize: '1.1rem' }}>
-            Rewrite History <ArrowRight size={20} />
-          </button>
+        <div className="sidebar-footer">
+          v1.0.0 — Built for developers
         </div>
-      )}
+      </aside>
+
+      {/* Main Content */}
+      <main className="main-area">
+        {page === 'dashboard' && <DashboardView data={dashData} />}
+        {page === 'config' && (
+          repoPath ? <ConfigView repoPath={repoPath} onUpdated={handleRefresh} />
+          : <NoRepo />
+        )}
+        {page === 'remotes' && (
+          repoPath ? <RemotesView repoPath={repoPath} data={dashData} onUpdated={handleRefresh} />
+          : <NoRepo />
+        )}
+        {page === 'branches' && (
+          repoPath ? <BranchesView repoPath={repoPath} onUpdated={handleRefresh} />
+          : <NoRepo />
+        )}
+        {page === 'reinit' && (
+          repoPath ? <ReinitView repoPath={repoPath} onUpdated={handleRefresh} />
+          : <NoRepo />
+        )}
+        {page === 'audit' && (
+          repoPath ? <AuditView repoPath={repoPath} />
+          : <NoRepo />
+        )}
+      </main>
+    </>
+  );
+}
+
+function NoRepo() {
+  return (
+    <div className="empty-state">
+      <GitCommit size={48} />
+      <h3>No Repository Selected</h3>
+      <p>Enter a repository path in the sidebar and click "Load" to begin.</p>
     </div>
   );
 }
